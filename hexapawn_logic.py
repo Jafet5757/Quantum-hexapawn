@@ -7,6 +7,9 @@ class Hexapawn:
   def __init__(self):
     self.board = ['X', 'X', 'X','-', '-', '-', 'O', 'O', 'O']
     self.current_player = 'O'
+    self.last_move = None
+    self.number_of_pieces = 3
+    self.player_winner = False
 
   def print_board(self):
     """ 
@@ -187,9 +190,30 @@ class Hexapawn:
       except:
         c = input("\nError, Desea parar? (s/n): ")
         if c == 's':
-          break
+          exit()
         else:
           continue
+
+  def update_board(self, state:tuple):
+    """ 
+    Update the board with the state
+
+    parameters:
+    state: tuple
+      The state to update the board (general, x, o) 
+    """
+    # Update board
+    for i, p in enumerate(state[1]):
+      # Update x player
+      if state[1][i] == '1':
+        self.board[i] = 'X'
+      # Update o player
+      if state[2][i] == '1':
+        self.board[i] = 'O'
+      # Update empty space
+      if state[0][i] == '0':
+        self.board[i] = '-'
+    self.print_board()
 
   def get_random_move(self):
     """ 
@@ -198,17 +222,7 @@ class Hexapawn:
     moves = self.get_moves()
     selected = random.choice(moves) # Tuple: (general, x, o)
     # Update board
-    for i, p in enumerate(selected[1]):
-      # Update x player
-      if selected[1][i] == '1':
-        self.board[i] = 'X'
-      # Update o player
-      if selected[2][i] == '1':
-        self.board[i] = 'O'
-      # Update empty space
-      if selected[0][i] == '0':
-        self.board[i] = '-'
-    self.print_board()
+    self.update_board(selected)
   
   def game_finished(self)->bool:
     """ 
@@ -220,28 +234,134 @@ class Hexapawn:
     """
     if 'X' not in self.board:
       print("Ganó el jugador O")
+      self.player_winner = True
       return True
     if 'O' not in self.board:
       print("Ganó el jugador X")
+      self.player_winner = False
       return True
     representations = self.get_representations()
     # id there are 1 in the first 3 positions of the x player representation, the player X won
     if '1' in representations[1][6:]:
       print("Ganó el jugador X")
+      self.player_winner = False
       return True
     # id there are 1 in the last 3 positions of the x player representation, the player O won
     if '1' in representations[2][:3]:
       print("Ganó el jugador O")
+      self.player_winner = True
       return True
     return False
+  
+  def get_inteligent_move(self, learning:bool=False, filename:str="learned_movements.csv")->tuple:
+    """ 
+      read the file of learned movements and get a random movement available 
+
+      Parameters:
+      learning: bool
+        If true update the file of learned movements
+      filename: str
+        The name of the file to read the learned movements
+
+      -------
+      return: tuple
+        The selected movement
+    """
+    # Read the CSV file
+    df = pd.read_csv(filename, dtype=str, header=0, skipinitialspace=True)
+    # Get the current state
+    general, x_player, o_player = self.get_representations()
+    # Search the current state in the DataFrame
+    possible_movements = df[
+        (df['actual_state_general'] == general) &
+        (df['actual_state_x'] == x_player) &
+        (df['actual_state_o'] == o_player)
+    ]
+
+    # Count how much columns are not None
+    count_possible_movements = ((possible_movements.dropna(axis=1, how='all').count(axis=1) / 3) - 1).sum() # Count the number of tuples less the actual state
+    possible_movements = possible_movements.dropna(axis=1, how='all')
+    
+    # If there are not possible movements return none
+    if count_possible_movements == 0:
+      print("No hay movimientos inteligentes posibles")
+      return None
+    else:
+      while True:
+        # Select a random movement
+        selected = random.randint(1, count_possible_movements)
+        # Get the selected movement (column)
+        selected_movement = possible_movements.iloc[0, selected*3:selected*3+3] # Get the selected tuple of movement   
+        # Si no es None, romper el ciclo
+        if selected_movement[0] is not None and pd.notna(selected_movement[0]):
+          break
+      # Save the last movement
+      self.last_move = selected_movement.to_dict()
+      # transform to tuple
+      selected_movement = (selected_movement[0], selected_movement[1], selected_movement[2])
+      # Update board
+      self.update_board(selected_movement)
+      return selected_movement
+
+  def update_inteligents_moves(self, game_over = False, filename:str = "learned_movements.csv"):
+    """ 
+    Verify if loss a piece if true delete the last movement in the file, else nothing
+    """
+    # Get representations
+    _, x_player, o_player = self.get_representations()
+    # Count the number of pieces of the machine player
+    pieces = x_player.count('1') if self.current_player == 'O' else o_player.count('1')
+    
+    if pieces < self.number_of_pieces or game_over:
+      # Delete the last movement in the file
+      df = pd.read_csv(filename, dtype=str, header=0, skipinitialspace=True)
+      # get keys of last movement
+      keys = list(self.last_move.keys())
+      # get the last movement
+      index_to_drop = df[
+          (df[keys[0]] == self.last_move[keys[0]]) &
+          (df[keys[1]] == self.last_move[keys[1]]) &
+          (df[keys[2]] == self.last_move[keys[2]])
+      ].index
+      df.loc[index_to_drop, keys] = None
+      # Save the file
+      df.to_csv(filename, index=False)
+      # Update the number of pieces
+      self.number_of_pieces = pieces
+
+  def play(self, random:bool = False, learning = False, filename:str="learned_movements.csv"):
+    """ 
+    Play the game with the machine player
+    """
+    self.print_board()
+
+    while True:
+      self.user_move()
+
+      # Check if the game is finished
+      if self.game_finished():
+        self.update_inteligents_moves(game_over=True,filename=filename)
+        break
+
+      # wait a moment to move
+      time.sleep(1)
+      if not random:
+        move = self.get_inteligent_move(filename=filename)
+        # If there are not possible movements, get a random movement
+        if move is None:
+          self.get_random_move()
+        elif learning:
+          # Update the file of learned movements
+          self.update_inteligents_moves(filename=filename)
+      else:
+        # Get a random movement
+        self.get_random_move()
+
+      # Check if the game is finished
+      if self.game_finished():
+        break
 
 if __name__ == '__main__':
-
+  
   game = Hexapawn()
-  game.print_board()
-  while True:
-    game.user_move()
-    time.sleep(1)
-    game.get_random_move()
-    if game.game_finished():
-      break
+  game.play(random=False, learning=False)
