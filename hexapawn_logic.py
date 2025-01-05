@@ -2,6 +2,7 @@ from prettytable import PrettyTable
 import pandas as pd
 import random
 import time
+from quantum_search import grover_search
 
 class Hexapawn:
   def __init__(self):
@@ -100,7 +101,7 @@ class Hexapawn:
     #df.to_csv(filename, index=False)
       
 
-  def get_moves(self):
+  def get_moves(self)->list:
     """ 
     Returns a list of possible moves for the current player
 
@@ -220,6 +221,9 @@ class Hexapawn:
      Get a random move for the machine player
     """
     moves = self.get_moves()
+    if not moves:
+      print("Ganaste (o perdiste, no sé)")
+      exit()
     selected = random.choice(moves) # Tuple: (general, x, o)
     # Update board
     self.update_board(selected)
@@ -277,10 +281,36 @@ class Hexapawn:
         (df['actual_state_x'] == x_player) &
         (df['actual_state_o'] == o_player)
     ]
+    
+    # Search the general state in the Quantum Search
+    list_moves = possible_movements[['play1_state_x', 'play2_state_x', 'play3_state_x', 'play4_state_x']]
+
+    if list_moves.empty:
+      print("No hay movimientos inteligentes posibles")
+      return None
+    
+    list_moves = list_moves.values.tolist()[0]
+    # delete nan
+    list_aux = []
+    for i in list_moves:
+      if pd.notna(i):
+        list_aux.append(i)
+    print(list_aux)
+    qs = grover_search(list_aux)
+    
+    # Select the best movement
+    if qs is not None:
+      selected = max(qs, key=qs.get)
+    else:
+      print("No hay movimientos inteligentes posibles")
+      return None
+    
+    # Get index of the column
+    column = possible_movements.eq(selected).idxmax(axis=1).iloc[0] # Get the column of the selected movement
+    index_column = possible_movements.columns.get_loc(column)
 
     # Count how much columns are not None
     count_possible_movements = ((possible_movements.dropna(axis=1, how='all').count(axis=1) / 3) - 1).sum() # Count the number of tuples less the actual state
-    possible_movements = possible_movements.dropna(axis=1, how='all')
     
     # If there are not possible movements return none
     if count_possible_movements == 0:
@@ -289,9 +319,9 @@ class Hexapawn:
     else:
       while True:
         # Select a random movement
-        selected = random.randint(1, count_possible_movements)
+        selected = index_column - 1
         # Get the selected movement (column)
-        selected_movement = possible_movements.iloc[0, selected*3:selected*3+3] # Get the selected tuple of movement   
+        selected_movement = possible_movements.iloc[0, selected:selected+3] # Get the selected tuple of movement   
         # Si no es None, romper el ciclo
         if selected_movement[0] is not None and pd.notna(selected_movement[0]):
           break
@@ -339,7 +369,7 @@ class Hexapawn:
       self.user_move()
 
       # Check if the game is finished
-      if self.game_finished():
+      if self.game_finished() and learning:
         self.update_inteligents_moves(game_over=True,filename=filename)
         break
 
